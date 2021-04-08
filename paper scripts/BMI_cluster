@@ -1,0 +1,156 @@
+library(MendelianRandomization)
+library(tidyverse)
+library(RColorBrewer)
+library(ggplot2)
+library(MRPRESSO)
+
+#Pulit BMI beta's and se's
+B0 = read.csv("beta_pulit.csv", header = TRUE)
+S0 = read.csv("se_pulit.csv", header = TRUE)
+n = nrow(B0)
+
+#Create three data matrices: beta's, standardised beta's (z-scores), proportional (standardised) beta's
+B = data.matrix(B0[, -1])
+S = data.matrix(S0[, -1])
+B_std = B / S
+B_prop = B
+for (i in 1:n){
+  B_prop[i, ] = B_std[i, ] / sqrt(sum(B_std[i, ]^2))
+}
+
+#Perform directional clustering with noise
+set.seed(20201104)
+bmi_cluster = navmix(B_std, K = 20)
+
+#Only consider observations with Pr(cluster membership > 0)
+thresh = 0
+noise_cl = ncol(bmi_cluster$fit$g)
+a = vector(length = n)
+for (j in 1:n){
+  a[j] = max(bmi_cluster$fit$g[j, ]) >= thresh & bmi_cluster$fit$z[j] != noise_cl
+  }
+B_assigned = B_prop[a, , drop = FALSE]
+#Re-order cluster numbers from largest (1) to smallest (5)
+bmi_cluster_assigned = case_when(
+  bmi_cluster$fit$z[a] == 1 ~ 4,
+  bmi_cluster$fit$z[a] == 2 ~ 1,
+  bmi_cluster$fit$z[a] == 3 ~ 3,
+  bmi_cluster$fit$z[a] == 4 ~ 2,
+  bmi_cluster$fit$z[a] == 5 ~ 5
+)
+
+#Get CHD associations with pulit snps
+pulit_bmi_snps = read.csv("pulit_bmi_snps.csv", header = TRUE)
+snps = pulit_bmi_snps$rsID
+pheno_reps = round(length(pulit_bmi_snps$rsID) / 100)
+A = lapply(1:pheno_reps, function(j){
+  ph = phenoscanner(snpquery = snps[(100*(j-1)+1):(100*j)], pvalue = 1)
+  ph$results
+})
+A[[(pheno_reps+1)]] = phenoscanner(snpquery = snps[(pheno_reps * 100 + 1):(pheno_reps * 100 + length(snps) %% 100)],
+                                   pvalue = 1)$results
+bmi_pheno_all = rbind(A[[1]], A[[2]])
+if (pheno_reps > 3){
+  for (j in 3:(pheno_reps+1)){
+    bmi_pheno_all = rbind(bmi_pheno_all, A[[j]])
+  }
+} else {
+  bmi_pheno_all = rbind(bmi_pheno_all, A[[3]])
+  bmi_pheno_all = rbind(bmi_pheno_all, A[[4]])
+}
+rm(A)
+
+chd_snps = bmi_pheno_all %>% filter(dataset == "CARDIoGRAMplusC4D_CHD_Mixed_2015") %>% select(c("rsid", "a1", beta, se))
+chd_snps$beta = as.numeric(chd_snps$beta)
+chd_snps$se = as.numeric(chd_snps$se)
+names(chd_snps) = c("rsid", "a1_chd", "beta_chd", "se_chd")
+clust_mem = data.frame("rsid" = B0$rsid[a], "z" = bmi_cluster_assigned)
+bmi_snps = data.frame("rsid" = pulit_bmi_snps$rsid, "a1_bmi" = pulit_bmi_snps$EA,
+                      "beta_bmi" = pulit_bmi_snps$Beta,
+                      "se_bmi" = pulit_bmi_snps$SE
+)
+bmi_snps = inner_join(bmi_snps, clust_mem, by = "rsid")
+
+#Create data frame with BMI and CHD associations and harmonise
+all_dat = inner_join(bmi_snps, chd_snps, by = "rsid")
+all_dat$beta_chd = all_dat$beta_chd * (as.numeric(as.character(all_dat$a1_bmi)==as.character(all_dat$a1_chd))*2-1)
+all_dat = all_dat[, !(names(all_dat) %in% c("a1_bmi", "a1_chd"))]
+all_dat$beta_chd = all_dat$beta_chd * sign(all_dat$beta_bmi)
+all_dat$beta_bmi = all_dat$beta_bmi * sign(all_dat$beta_bmi)
+anti_join(bmi_snps, chd_snps, by = "rsid")
+
+#Create MR objects for each cluster
+mrob_all = mr_input(bx = all_dat$beta_bmi, bxse = all_dat$se_bmi, by = all_dat$beta_chd, byse = all_dat$se_chd)
+sub_dat = all_dat[all_dat$z == 1, ]
+mrob_clust1 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_chd, byse = sub_dat$se_chd)
+sub_dat = all_dat[all_dat$z == 2, ]
+mrob_clust2 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_chd, byse = sub_dat$se_chd)
+sub_dat = all_dat[all_dat$z == 3, ]
+mrob_clust3 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_chd, byse = sub_dat$se_chd)
+sub_dat = all_dat[all_dat$z == 4, ]
+mrob_clust4 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_chd, byse = sub_dat$se_chd)
+sub_dat = all_dat[all_dat$z == 5, ]
+mrob_clust5 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_chd, byse = sub_dat$se_chd)
+
+#MR estimates
+set.seed(20200226)
+mrest_all = mrest(mrob_all, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_clust1 = mrest(mrob_clust1, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_clust2 = mrest(mrob_clust2, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_clust3 = mrest(mrob_clust3, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_clust4 = mrest(mrob_clust4, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_clust5 = mrest(mrob_clust5, log_scale = FALSE, y_lab_pos = 2.8)
+
+#MR-Egger intercept test
+egger_all = mr_egger(mrob_all)
+egger_clust1 = mr_egger(mrob_clust1)
+egger_clust2 = mr_egger(mrob_clust2)
+egger_clust3 = mr_egger(mrob_clust3)
+egger_clust4 = mr_egger(mrob_clust4)
+egger_clust5 = mr_egger(mrob_clust5)
+
+#Perform MR with CRP as outcome
+CRP_bmi = read.csv("CRP_bmi.csv")
+mrob_crp_all = mr_input(bx = CRP_bmi$beta_bmi, bxse = CRP_bmi$se_bmi, by = CRP_bmi$beta_crp, byse = CRP_bmi$se_crp)
+sub_dat = CRP_bmi[CRP_bmi$z == 1, ]
+mrob_crp_clust1 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_crp, byse = sub_dat$se_crp)
+sub_dat = CRP_bmi[CRP_bmi$z == 2, ]
+mrob_crp_clust2 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_crp, byse = sub_dat$se_crp)
+sub_dat = CRP_bmi[CRP_bmi$z == 3, ]
+mrob_crp_clust3 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_crp, byse = sub_dat$se_crp)
+sub_dat = CRP_bmi[CRP_bmi$z == 4, ]
+mrob_crp_clust4 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_crp, byse = sub_dat$se_crp)
+sub_dat = CRP_bmi[CRP_bmi$z == 5, ]
+mrob_crp_clust5 = mr_input(bx = sub_dat$beta_bmi, bxse = sub_dat$se_bmi, by = sub_dat$beta_crp, byse = sub_dat$se_crp)
+
+set.seed(20200315)
+mrest_crp_all = mrest(mrob_crp_all, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_crp_clust1 = mrest(mrob_crp_clust1, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_crp_clust2 = mrest(mrob_crp_clust2, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_crp_clust3 = mrest(mrob_crp_clust3, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_crp_clust4 = mrest(mrob_crp_clust4, log_scale = FALSE, y_lab_pos = 2.8)
+mrest_crp_clust5 = mrest(mrob_crp_clust5, log_scale = FALSE, y_lab_pos = 2.8)
+
+#Peform MR with 41 cytokines and growth factors as outcomes
+cytokines_dat = read.csv("cytokines_dat.csv")[, -1]
+cytokines_dat = inner_join(cytokines_dat, clust_mem, by = "rsid")
+mr_cytokines_z = matrix(nrow = 41, ncol = 6)
+mr_cytokines_p = matrix(nrow = 41, ncol = 6)
+for (j in 1:41){
+  mrob = mr_input(bx = cytokines_dat[, 3], bxse = cytokines_dat[, 4],
+                  by = cytokines_dat[, (2*j+3)], byse = cytokines_dat[, (2*j+4)])
+  mrest = mr_ivw(mrob)
+  mr_cytokines_z[j, 1] = mrest$Estimate/mrest$StdError
+  mr_cytokines_p[j, 1] = mrest$Pvalue
+}
+
+for (i in 1:5){
+  for (j in 1:41){
+    clust_i = which(cytokines_dat$z == i)
+    mrob = mr_input(bx = cytokines_dat[clust_i, 3], bxse = cytokines_dat[clust_i, 4],
+                    by = cytokines_dat[clust_i, (2*j+3)], byse = cytokines_dat[clust_i, (2*j+4)])
+    mrest = mr_ivw(mrob)
+    mr_cytokines_z[j, (i+1)] = mrest$Estimate/mrest$StdError
+    mr_cytokines_p[j, (i+1)] = mrest$Pvalue
+  }
+}
