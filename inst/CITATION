@@ -1,0 +1,23 @@
+c(
+  bibentry(
+    header = "To cite package ‘navmix’ in publications use:",
+    bibtype = "Article",
+    author = c(
+      person("A. J.", "Grant", role = c("aut", "cre")),
+      person("D.", "Gill", role = "aut"),
+      person("P. D. W.", "Kirk", role = "aut"),
+      person("S.", "Burgess", role = "aut")
+    ),
+    title = "Noise-augmented directional clustering of genetic association data identifies distinct mechanisms underlying obesity",
+    year = "2021",
+    journal = "bioRxiv",
+    url = "https://www.biorxiv.org/content/10.1101/2021.04.07.438817v1",
+    doi = "10.1101/2021.04.07.438817",
+    key = "navmix",
+    textVersion = paste(
+      "Grant, A.J., Gill, D., Kirk, P.D.W., Burgess, S.",
+      "(2021)",
+      "Noise-augmented directional clustering of genetic association data identifies distinct mechanisms underlying obesity.",
+      "bioRxiv. doi: https://doi.org/10.1101/2021.04.07.438817")
+  )
+)
