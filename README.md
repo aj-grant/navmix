@@ -9,5 +9,5 @@ library(devtools)
 install_github("aj-grant/navmix")
 ```
 
-# Paper scripts
-The Paper scripts folder contains scripts to replicate the simulation studies and applied analysis presented in the paper.
+# paper scripts
+The paper scripts folder contains scripts to replicate the simulation studies and applied analysis presented in the paper.
