@@ -18,7 +18,7 @@ for (i in 1:n){
   B_prop[i, ] = B_std[i, ] / sqrt(sum(B_std[i, ]^2))
 }
 
-#Perform directional clustering with noise
+#Perform noise-augmented directional clustering
 set.seed(20201104)
 bmi_cluster = navmix(B_std, K = 20)
 
