@@ -4,7 +4,9 @@ library(RColorBrewer)
 library(ggplot2)
 library(MRPRESSO)
 
-#Pulit BMI beta's and se's
+#'beta_pulit.csv' and 'se_pulit.csv' contain 10 columns. Column 1 is a list of rsid's of genetic variants which
+#'associate with BMI from the GWAS of Pulit. Columns 2-10 contain the beta's and SE's, respectively, for these genetic
+#'variants with respect to the nine traits used for clustering.
 B0 = read.csv("beta_pulit.csv", header = TRUE)
 S0 = read.csv("se_pulit.csv", header = TRUE)
 n = nrow(B0)
@@ -40,6 +42,8 @@ bmi_cluster_assigned = case_when(
 )
 
 #Get CHD associations with pulit snps
+#'pulit_bmi_snps.csv' contains 4 columns: rsid, Beta, SE, EA. These are the rsid, beta, SE and effect allele for each
+#'genetic variant taken from the Pulit GWAS.
 pulit_bmi_snps = read.csv("pulit_bmi_snps.csv", header = TRUE)
 snps = pulit_bmi_snps$rsID
 pheno_reps = round(length(pulit_bmi_snps$rsID) / 100)
@@ -110,6 +114,9 @@ egger_clust4 = mr_egger(mrob_clust4)
 egger_clust5 = mr_egger(mrob_clust5)
 
 #Perform MR with CRP as outcome
+#'CRP_bmi.csv' contains 7 columns: rsid, a1_bmi, beta_bmi, se_bmi, beta_crp, se_crp, z. beta's and SE's for BMI are
+#'taken from the Pulit GWAS, beta's and SE's for CRP are taken from the Neale Lab GWAS results. a1_bmi is the effect
+#'allele,  z is the cluster membership.
 CRP_bmi = read.csv("CRP_bmi.csv")
 mrob_crp_all = mr_input(bx = CRP_bmi$beta_bmi, bxse = CRP_bmi$se_bmi, by = CRP_bmi$beta_crp, byse = CRP_bmi$se_crp)
 sub_dat = CRP_bmi[CRP_bmi$z == 1, ]
@@ -132,6 +139,8 @@ mrest_crp_clust4 = mrest(mrob_crp_clust4, log_scale = FALSE, y_lab_pos = 2.8)
 mrest_crp_clust5 = mrest(mrob_crp_clust5, log_scale = FALSE, y_lab_pos = 2.8)
 
 #Peform MR with 41 cytokines and growth factors as outcomes
+#'cytokines_dat.csv' contains 86 columns: rsid, A1 (effect allele), beta_bmi, se_bmi, then beta and se for each of the
+#'41 cytokines considered.
 cytokines_dat = read.csv("cytokines_dat.csv")[, -1]
 cytokines_dat = inner_join(cytokines_dat, clust_mem, by = "rsid")
 mr_cytokines_z = matrix(nrow = 41, ncol = 6)
