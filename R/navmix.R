@@ -148,11 +148,11 @@ rad_plot = function(mu, plot_radial_separate = FALSE, plot_radial_par = NULL, ra
       current_par = plot_radial_par
       }
   K = ncol(mu)
-  if (K <= 8){line_col = brewer.pal(K, "Dark2")} else{line_col = hcl(seq(15, 375, length = (K + 1)))}
+  if (K <= 8){line_col = brewer.pal(8, "Dark2")[1:K]} else{line_col = hcl(seq(15, 375, length = (K + 1)))}
   if (plot_radial_separate == FALSE){
     rad_prop = radial.plot(t(mu), rp.type = "p", labels = rownames(mu), show.grid.labels = TRUE, line.col = line_col,
                            lwd = 1.5, radial.lim = c(-1, 1), label.prop = 1.3)
-    legend(radial_legend_pos[1], legend_pos[2], seq(1, K), col=line_col, lty=1, cex = 0.5, title = "Cluster", bty = "n")
+    legend(radial_legend_pos[1], radial_legend_pos[2], seq(1, K), col=line_col, lty=1, cex = 0.5, title = "Cluster", bty = "n")
   } else {
     rlist = vector(mode = "list", length = K)
     par(mfrow = c(ceiling(K/separate_col), radial_separate_col))
