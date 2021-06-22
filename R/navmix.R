@@ -155,7 +155,7 @@ rad_plot = function(mu, plot_radial_separate = FALSE, plot_radial_par = NULL, ra
     legend(radial_legend_pos[1], radial_legend_pos[2], seq(1, K), col=line_col, lty=1, cex = 0.5, title = "Cluster", bty = "n")
   } else {
     rlist = vector(mode = "list", length = K)
-    par(mfrow = c(ceiling(K/separate_col), radial_separate_col))
+    par(mfrow = c(ceiling(K/radial_separate_col), radial_separate_col))
     for (j in 1:K){
       rlist[[j]] = radial.plot(t(mu[, j]), rp.type = "p", labels = rownames(mu), show.grid.labels = TRUE,
                                line.col = line_col[j], lwd = 1.5, radial.lim = c(-1, 1), label.prop = 1.3)
