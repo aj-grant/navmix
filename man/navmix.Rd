@@ -15,10 +15,11 @@ navmix(
   max_iter = 100,
   plot = FALSE,
   plot_heat = TRUE,
-  plot_radial = TRUE,
-  plot_radial_separate = FALSE,
-  radial_legend_pos = c(-2.5, 2.7),
-  radial_separate_col = 2
+  plot_heat_mu = FALSE,
+  plot_parallel = TRUE,
+  plot_radial = FALSE,
+  plot_radial_options = list(plot_radial_separate = FALSE, radial_legend_pos = c(-2.5,
+    2.7), radial_separate_col = 2)
 )
 }
 \arguments{
@@ -26,7 +27,7 @@ navmix(
 
 \item{K}{The number of clusters to fit.}
 
-\item{select_K}{If TRUE (the default setting), the number of clusters will be chosen by BIC, with {K} the maximum number of clusters
+\item{select_K}{If TRUE (the default setting), the number of clusters will be chosen by BIC, with K the maximum number of clusters
 considered. If FALSE, then a model with K clusters will be fit.}
 
 \item{pj_ini}{The initial proportion of observations which belong in the noise cluster. Must be a number greater or
@@ -49,15 +50,15 @@ ggplot object.}
 
 \item{plot_radial}{Produces (a) radial plot(s) of the results if plot is set to TRUE.}
 
+\item{common_kapp}{If TRUE, then model will force the kappa parameter to be equal for all clusters, except the noise
+cluster.}
+
 \item{plot_radial_separate}{If set to FALSE (the default value), the fitted means of each cluster are plotted on the
 same radial plot. If set to TRUE, they are plotted on separate radial plots.}
 
 \item{radial_legend_pos}{Adjusts the position of the legend for a radial plots with all fitted means plotted together.}
 
 \item{radial_separate_col}{Adjusts the format of the output of radial plots on separate plots.}
-
-\item{common_kapp}{If TRUE, then model will force the kappa parameter to be equal for all clusters, except the noise
-cluster.}
 }
 \value{
 Returned are the BIC values for each model fitted ($BIC), the final fitted model ($fit) and, if produced, the
