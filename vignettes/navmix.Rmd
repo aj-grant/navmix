@@ -1,0 +1,101 @@
+---
+title: "navmix vignette"
+author: "Andrew Grant"
+date: "15^th^ September 2021"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{navmix}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+#Installation
+```{r, eval = F}
+library(devtools)
+install_github("aj-grant/navmix", build_vignettes = TRUE)
+library(navmix)
+```
+
+#Overview
+The navmix package implements a clustering method which clusters observed vectors based on their direction from the
+origin. It fits a mixture model of von Mises--Fisher distributions including a noise cluster to provide robustness to
+outliers. It also includes an automatic method for choosing the number of clusters using the BIC.
+
+The inputs are an $n \times m$ matrix, where $m > 1$ and $n > m$. Each of the $n$ rows represents an $m$-dimensional
+observation. Because the method clusters based on direction, the first step in the algorithm is to normalise these
+observed vectors to have norm $1$. Optional paramters are:
+
+* $K$, the maximum number of clusters to fit (default = 10);
+* select_K, which determines whether to fit up to K clusters and output the fitted model with the maximum BIC (default),
+or whether to fit exactly K clusters;
+* common_kappa, which determines whether to force the \kappa parameters for each cluster to be equal (default = FALSE);
+* pj_ini, which sets the initial proportion of observations to be part of the noise cluster (default = 0.05). Note, if
+pj_ini is set to 0, no noise cluster will be fit.
+
+The other parameters control convergence criterion and plots.
+
+A motivation for performing the clustering technique is to cluster genetic association data. In this setting, the inputs
+are estimates of the association between $n$ genetic variants and $m$ different traits. These estimated associations
+may, for example, be obtained from GWAS summary statistics. The following section illustrates how to cluster
+genetic association data using navmix.
+
+#Clustering genetic association data
+Consider the case where we wish to cluster $n$ genetic variants according to their associations with $m$ traits. Let B
+be an $n \times m$ matrix containing the estimated associations ($\beta$ coefficients) and let S be an $n \times m$
+matrix containing their standard errors. The recommended input is the standardised associations given by B / S.
+
+```{r, eval = F}
+B_std = B/S
+cluster_out = navmix(B_std)
+```
+
+An alternative way to standardise the associations is to include estimates of the correlation between traits. This may
+improve the clustering if the traits are highly correlated and the genetic associations are estimated in the same, or
+overlapping, sample(s). In this case, the full covariance matrices of the genetic variant-trait associations can be
+estimated from the standard errors and trait correlation estimates. Let R be an $m \times m$ matrix with (i, j)th entry
+the estimated correlation between traits i and j. The standardised associations can be obtained using the function
+`row_standardise`.
+
+```{r, eval = F}
+B_std = navmix::row_standardise(B, S, R)
+cluster_out = navmix(B_std)
+```
+
+Finally, the unstandardised associations may be used, in which case the input matrix is simply B.
+
+```{r, eval = F}
+cluster_out = navmix(B)
+```
+
+#Plots
+There are four plot options:
+
+* Heat map of the proportional associations for each observation with each trait;
+* Heat map of the means of the fitted vMF distrbutions;
+* Parallel plot of the means of the fitted vMF distributions;
+* Radial plot of the means of the fitted vMF distributions.
+
+Note that the heat maps and parallel plot are output as ggplot objects, whereas the radial plot is not.
+
+##Heat map of the proportional associations
+This plot is produced if the optional parameters `plot` and `plot_heat` are set to `TRUE` (both are TRUE by default).
+The plotted values are the normalised observations (representing, for example, the proportional associations of the
+genetic variants with each trait). The traits are re-ordered so that those that are more alike with respect to their
+associations with the observations are closer together in the plot. This re-ordering can be turned off by setting
+`reorder_traits = FALSE`.
+
+##Plots of the means of the fitted vMF distributions
+The mean vectors of the fitted vMF distributions represent observations at the center of each cluster. If the optional
+paramter `plot` is set to `TRUE`, a heat map of the mean vectors is produced if `plot_heat_mu = TRUE` (default = FALSE),
+a parallel plot of the mean vectors is produced if `plot_parallel = TRUE` (default = TRUE), and a radial plot is
+produced if `plot_radial = TRUE` (default = FALSE). The parameter `plot_radial_options` is a list with optional
+parameters: `plot_radial_separate` determines whether the mean vectors are plotted on separate plots instead of the same
+plot (default = FALSE); `radial_legend_pos` determines the position of the legend in the plot; and `radial_separate_col`
+determines how many columns to output the radial plots if `plot_radial_separate = FALSE` (default = 2).
