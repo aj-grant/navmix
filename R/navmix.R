@@ -38,8 +38,10 @@
 #'\item{l}{The value of the likelihood function at the estimated parameters.}
 
 navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.05, no_ini = 5, tol = 1.0e-4,
-                  max_iter = 100, plot = FALSE, plot_heat = TRUE, plot_radial = TRUE, plot_radial_separate = FALSE,
-                  radial_legend_pos = c(-2.5, 2.7), radial_separate_col = 2){
+                  max_iter = 100, plot = FALSE, plot_heat = TRUE, plot_heat_mu = FALSE, plot_parallel = TRUE,
+                  plot_radial = FALSE, plot_radial_options = list("plot_radial_separate" = FALSE,
+                                                                  "radial_legend_pos" = c(-2.5, 2.7),
+                                                                  "radial_separate_col" = 2)){
   if (is.numeric(pj_ini) == FALSE){stop('pj_ini must be a number greater or equal to 0 and strictly less than 1')}
     else if (pj_ini < 0 | pj_ini > 1) {stop('pj_ini must be a number greater or equal to 0 and strictly less than 1')}
   if (is.numeric(no_ini) == FALSE){stop('no_ini must be a number greater or equal to 1')}
@@ -55,6 +57,9 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
   } else {
     n = dim(x)[1]
     m = dim(x)[2]
+  }
+  if (m < 2){
+    stop('x must have at least two columns.')
   }
   if (K > n){
     if (select_K == TRUE){
@@ -102,18 +107,29 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
     colnames(x_prop) = colnames(x)
     noise_cl = ncol(fit$g)
     if(plot_heat == TRUE){
-      heatmap_plot = hm_plot(x_prop[fit$z != noise_cl, ], fit$z[fit$z != noise_cl])
+      heatmap_plot = hm_plot(x_prop[fit$z != noise_cl, ], fit$z[fit$z != noise_cl], print = TRUE)
       navmix_out$heatmap_plot = heatmap_plot
-      }
+    }
+    if(plot_heat_mu == TRUE){
+      heatmap_mu_plot = hm_plot(fit$mu[, -noise_cl], seq(1, (noise_cl-1)), reorder_traits = FALSE, print = FALSE)
+      navmix_out$heatmap_mu_plot = heatmap_mu_plot + xlab("Trait") +
+        theme(axis.title.y = element_blank(), axis.text.x = element_text(size = 7), strip.text = element_blank()) +
+        scale_y_discrete(expand = c(0, 0)) + scale_x_discrete(expand = c(0, 0))
+    }
+    if(plot_parallel == TRUE){
+      parallel_plot = par_plot(fit$mu[, -noise_cl])
+      navmix_out$parallel_plot = parllel_plot
+    }
     if(plot_radial == TRUE){
-      radial_plot = rad_plot(fit$mu[, -noise_cl], plot_radial_separate = plot_radial_separate, radial_legend_pos,
-                             radial_separate_col)
+      radial_plot = rad_plot(fit$mu[, -noise_cl], plot_radial_separate = plot_radial_options$plot_radial_separate,
+                             radial_legend_pos = plot_radial_options$radial_legend_pos,
+                             radial_separate_col = plot_radial_options$radial_separate_col)
       }
   }
   return(navmix_out)
 }
 
-hm_plot = function(B, z, reorder_traits = TRUE){
+hm_plot = function(B, z, reorder_traits = TRUE, print = TRUE){
   heat_df = data.frame(B)
   names(heat_df) = colnames(B)
   if (reorder_traits == TRUE){
@@ -129,7 +145,7 @@ hm_plot = function(B, z, reorder_traits = TRUE){
   heat_df = pivot_longer(heat_df, 1:ncol(B))
   names(heat_df) = c("Variant", "clust", "Trait", "Value")
   heat_df$Trait = factor(heat_df$Trait, levels = colnames(B)[heat_colord])
-  heat_df$Variant = factor(heat_df$Variant)
+  heat_df$Variant = factor(heat_df$Variant, levels = rownames(B))
   heatmap_plot = ggplot(heat_df, aes(x = Variant, y = Trait, fill = Value)) +
     geom_tile() + facet_grid(cols = vars(clust), scales = "free_x", space = 'free') +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
@@ -137,7 +153,26 @@ hm_plot = function(B, z, reorder_traits = TRUE){
           legend.text = element_text(size = 7), legend.title = element_text(size = 7),
           strip.text = element_text(size = 7)) +
     scale_fill_distiller(palette="RdYlBu")
-  print(heatmap_plot)
+  if (print == TRUE) {print(heatmap_plot)} else {heatmap_plot}
+}
+
+par_plot = function(mu){
+  par_df = data.frame(t(mu))
+  names(par_df) = rownames(mu)
+  par_df$Cluster = factor(colnames(mu), levels = colnames(mu))
+  par_df = pivot_longer(par_df, seq(1, nrow(mu)), names_to =  "Trait")
+  trait_names = rownames(mu)[order(apply(mu, 1, var))]
+  par_df$Trait = factor(par_df$Trait, levels = trait_names)
+  K = ncol(mu)
+  if (K <= 8){line_col = brewer.pal(max(3, K), "Dark2")} else {line_col = hcl(seq(15, 375, length = (K + 1)))}
+  ymaxmin = 1.1 * max(abs(mu))
+  ggplot(par_df, aes(x = Trait, y = value, group = Cluster, color = Cluster)) + geom_line() +
+    scale_color_manual(values = line_col) + ylim(c(-ymaxmin, ymaxmin)) + theme_bw() +
+    theme(axis.text = element_text(size = 6), legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6), axis.title.x = element_text(size = 6),
+          axis.title.y = element_text(size = 6)) +
+    scale_x_discrete(labels = trait_names) +
+    ylab("Mean proportional association") + geom_hline(yintercept = 0, size = 0.25)
 }
 
 rad_plot = function(mu, plot_radial_separate = FALSE, plot_radial_par = NULL, radial_legend_pos = c(-2.5, 2.7),
@@ -148,14 +183,14 @@ rad_plot = function(mu, plot_radial_separate = FALSE, plot_radial_par = NULL, ra
       current_par = plot_radial_par
       }
   K = ncol(mu)
-  if (K <= 8){line_col = brewer.pal(8, "Dark2")[1:K]} else{line_col = hcl(seq(15, 375, length = (K + 1)))}
+  if (K <= 8){line_col = brewer.pal(max(3, K), "Dark2")} else{line_col = hcl(seq(15, 375, length = (K + 1)))}
   if (plot_radial_separate == FALSE){
     rad_prop = radial.plot(t(mu), rp.type = "p", labels = rownames(mu), show.grid.labels = TRUE, line.col = line_col,
                            lwd = 1.5, radial.lim = c(-1, 1), label.prop = 1.3)
     legend(radial_legend_pos[1], radial_legend_pos[2], seq(1, K), col=line_col, lty=1, cex = 0.5, title = "Cluster", bty = "n")
   } else {
     rlist = vector(mode = "list", length = K)
-    par(mfrow = c(ceiling(K/radial_separate_col), radial_separate_col))
+    par(mfrow = c(ceiling(K/separate_col), radial_separate_col))
     for (j in 1:K){
       rlist[[j]] = radial.plot(t(mu[, j]), rp.type = "p", labels = rownames(mu), show.grid.labels = TRUE,
                                line.col = line_col[j], lwd = 1.5, radial.lim = c(-1, 1), label.prop = 1.3)
@@ -183,6 +218,16 @@ col_norm = function(x){
 C_vMF = function(kappa, d){
   nu = d / 2 - 1
   kappa^nu / ((2 * pi)^(nu+1) * besselI(kappa, nu))
+}
+
+row_standardise = function(x, se, r){
+  x_std = matrix(nrow = nrow(x), ncol = ncol(x))
+  for (j in 1:nrow(x)){
+    S1 = diag(se[j, ])
+    S = S1 %*% r %*% S1
+    x_std[j, ] = solve(sqrtm(S), x[j, ])
+  }
+  x_std
 }
 
 navmix_K = function(x0, K, pj_ini = 0.05, common_kappa = FALSE, no_ini = 5, tol = 1.0e-4, max_iter = 100){
