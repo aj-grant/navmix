@@ -118,7 +118,7 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
     }
     if(plot_parallel == TRUE){
       parallel_plot = par_plot(fit$mu[, -noise_cl])
-      navmix_out$parallel_plot = parllel_plot
+      navmix_out$parallel_plot = parallel_plot
     }
     if(plot_radial == TRUE){
       radial_plot = rad_plot(fit$mu[, -noise_cl], plot_radial_separate = plot_radial_options$plot_radial_separate,
