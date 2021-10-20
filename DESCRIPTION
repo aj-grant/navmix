@@ -1,7 +1,7 @@
 Package: navmix
 Type: Package
 Title: A package for performing directional clustering by fitting a noise-augmented von Mises-Fisher mixture model
-Version: 0.2.0
+Version: 0.2.1
 Author: Authors@R: person("Andrew", "Grant", email = "andrew.grant@mrc-bsu.cam.ac.uk", role = c("aut", "cre"))
 Maintainer: The package maintainer <yourself@somewhere.net>
 Description: A package for performing directional clustering by fitting a noise-augmented von Mises-Fisher mixture model
