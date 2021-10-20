@@ -38,8 +38,8 @@
 #'\item{l}{The value of the likelihood function at the estimated parameters.}
 
 navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.05, no_ini = 5, tol = 1.0e-4,
-                  max_iter = 100, plot = FALSE, plot_heat = TRUE, plot_heat_mu = FALSE, plot_parallel = TRUE,
-                  plot_radial = FALSE, plot_radial_options = list("plot_radial_separate" = FALSE,
+                  max_iter = 100, plot = FALSE, plot_heat = TRUE, reorder_traits = TRUE, plot_heat_mu = FALSE,
+                  plot_parallel = TRUE, plot_radial = FALSE, plot_radial_options = list("plot_radial_separate" = FALSE,
                                                                   "radial_legend_pos" = c(-2.5, 2.7),
                                                                   "radial_separate_col" = 2)){
   if (is.numeric(pj_ini) == FALSE){stop('pj_ini must be a number greater or equal to 0 and strictly less than 1')}
@@ -53,10 +53,20 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
   if (is.null(dim(x))){
     n = length(x)
     x = as.matrix(x, nrow = n)
-    m = dim(x)[2]
+    m = dim(x)[1]
   } else {
+    x = as.matrix(x)
     n = dim(x)[1]
     m = dim(x)[2]
+  }
+  if (is.numeric(x) == FALSE){stop('x must be able to be coerced into a numeric matrix')}
+  if (sum(is.na(x)) > 0){
+    x_complete = complete.cases(x)
+    x = x[x_complete, ]
+    warning('Rows in x with missing values have been removed.')
+    n = dim(x)[1]
+  } else {
+    x_complete = seq(1:n)
   }
   if (m < 2){
     stop('x must have at least two columns.')
@@ -70,7 +80,7 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
     }
   }
   if (is.null(rownames(x))){
-    snps_names = sprintf("snp %0d", seq(1:n))
+    snps_names = sprintf("snp %0d", seq(1:n))[x_complete]
   } else{
     snps_names = rownames(x)
   }
@@ -103,25 +113,37 @@ navmix = function(x, K = 10, select_K = TRUE, common_kappa = FALSE, pj_ini = 0.0
   navmix_out = list(BIC = bic, fit = fit)
   if (plot == TRUE){
     x_prop = row_norm(x)
-    rownames(x_prop) = rownames(x)
-    colnames(x_prop) = colnames(x)
+    rownames(x_prop) = snps_names
+    colnames(x_prop) = trait_names
     noise_cl = ncol(fit$g)
     if(plot_heat == TRUE){
-      heatmap_plot = hm_plot(x_prop[fit$z != noise_cl, ], fit$z[fit$z != noise_cl], print = TRUE)
+      heatmap_plot = hm_plot(x_prop[fit$z != noise_cl, ], fit$z[fit$z != noise_cl], reorder_traits = reorder_traits,
+                             print = TRUE)
       navmix_out$heatmap_plot = heatmap_plot
     }
     if(plot_heat_mu == TRUE){
-      heatmap_mu_plot = hm_plot(fit$mu[, -noise_cl], seq(1, (noise_cl-1)), reorder_traits = FALSE, print = FALSE)
-      navmix_out$heatmap_mu_plot = heatmap_mu_plot + xlab("Trait") +
-        theme(axis.title.y = element_blank(), axis.text.x = element_text(size = 7), strip.text = element_blank()) +
-        scale_y_discrete(expand = c(0, 0)) + scale_x_discrete(expand = c(0, 0))
+      mu = as.matrix(fit$mu[, -noise_cl])
+      rownames(mu) = trait_names
+      colnames(mu) = seq(1:(noise_cl-1))
+      heatmap_mu_plot = hm_plot(t(mu), seq(1, (noise_cl-1)), reorder_traits = FALSE, print = FALSE)
+      navmix_out$heatmap_mu_plot = heatmap_mu_plot + xlab("Cluster") +
+        theme(axis.title.y = element_blank(), axis.text.x = element_text(size = 7), strip.text = element_blank())
     }
     if(plot_parallel == TRUE){
-      parallel_plot = par_plot(fit$mu[, -noise_cl])
+      mu = as.matrix(fit$mu[, -noise_cl])
+      rownames(mu) = trait_names
+      colnames(mu) = seq(1:(noise_cl-1))
+      parallel_plot = par_plot(mu)
       navmix_out$parallel_plot = parallel_plot
     }
     if(plot_radial == TRUE){
-      radial_plot = rad_plot(fit$mu[, -noise_cl], plot_radial_separate = plot_radial_options$plot_radial_separate,
+      mu = as.matrix(fit$mu[, -noise_cl])
+      rownames(mu) = trait_names
+      colnames(mu) = seq(1:(noise_cl-1))
+      if (is.null(plot_radial_options$plot_radial_separate)){plot_radial_options$plot_radial_separate = FALSE}
+      if (is.null(plot_radial_options$radial_legend_pos)){plot_radial_options$radial_legend_pos = c(-2.5, 2.7)}
+      if (is.null(plot_radial_options$radial_separate_col)){plot_radial_options$radial_separate_col = 2}
+      radial_plot = rad_plot(mu, plot_radial_separate = plot_radial_options$plot_radial_separate,
                              radial_legend_pos = plot_radial_options$radial_legend_pos,
                              radial_separate_col = plot_radial_options$radial_separate_col)
       }
@@ -139,7 +161,7 @@ hm_plot = function(B, z, reorder_traits = TRUE, print = TRUE){
   } else {
     heat_colord = seq(1, ncol(B))
     }
-  heat_df = heat_df[, heat_colord]
+  heat_df = heat_df[, heat_colord, drop = FALSE]
   if (is.null(rownames(B))){heat_df$Variant = seq(1, length(z))} else {heat_df$variant = rownames(B)}
   heat_df$clust = z
   heat_df = pivot_longer(heat_df, 1:ncol(B))
@@ -152,7 +174,7 @@ hm_plot = function(B, z, reorder_traits = TRUE, print = TRUE){
           axis.title.y = element_text(size = 7), axis.title.x = element_text(size = 7),
           legend.text = element_text(size = 7), legend.title = element_text(size = 7),
           strip.text = element_text(size = 7)) +
-    scale_fill_distiller(palette="RdYlBu")
+    scale_fill_distiller(palette="RdYlBu") + scale_y_discrete(expand = c(0, 0)) + scale_x_discrete(expand = c(0, 0))
   if (print == TRUE) {print(heatmap_plot)} else {heatmap_plot}
 }
 
@@ -190,7 +212,7 @@ rad_plot = function(mu, plot_radial_separate = FALSE, plot_radial_par = NULL, ra
     legend(radial_legend_pos[1], radial_legend_pos[2], seq(1, K), col=line_col, lty=1, cex = 0.5, title = "Cluster", bty = "n")
   } else {
     rlist = vector(mode = "list", length = K)
-    par(mfrow = c(ceiling(K/separate_col), radial_separate_col))
+    par(mfrow = c(ceiling(K/radial_separate_col), radial_separate_col))
     for (j in 1:K){
       rlist[[j]] = radial.plot(t(mu[, j]), rp.type = "p", labels = rownames(mu), show.grid.labels = TRUE,
                                line.col = line_col[j], lwd = 1.5, radial.lim = c(-1, 1), label.prop = 1.3)
