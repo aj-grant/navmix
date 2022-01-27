@@ -1,987 +1,1723 @@
-library(MASS)
 library(fossil)
 library(mclust)
 library(expm)
+library(tictoc)
 library(parallel)
-library(skmeans)
-library(truncnorm)
+library(navmix)
 
 cl = makeCluster(6)
-clusterEvalQ(cl, library(MASS))
-clusterEvalQ(cl, library(fossil))
 clusterEvalQ(cl, library(mclust))
-clusterEvalQ(cl, library(skmeans))
-clusterEvalQ(cl, library(truncnorm))
+clusterEvalQ(cl, library(navmix))
 clusterEvalQ(cl, library(expm))
 
-beta1_sim = function(n, low, upp, s_noise){
-  K = length(n) - 1
-  b = vector(length = sum(n))
-  a = 1
-  for (j in 1:K){
-    b[a:(a+n[j]-1)] = runif(n[j], low[j], upp[j])
-    a = a + n[j]
+N0 = list('m2' = rep(20000, 2), 'm9' = rep(20000, 9))
+n0 = list('k1' = c(80, 20), 'k2' = c(40, 40, 20), 'k4' = c(30, 20, 20, 10, 20))
+g0 = list('g0' = 0, 'g4' = 0.4, 'g8' = 0.8)
+d_m2 = list('k1' = c(1, 1),
+            'k2' = rbind(c(1, 1), c(1, -1)),
+            'k4' = rbind(c(1, 1), c(1, -1), c(-1, 1), c(-1, -1)))
+d_m9 = list('k1' = c(1, 1, 1, rep(0.5, 6)),
+            'k2' = rbind(c(1, 1, 1, rep(0.5, 6)), c(1, -1, -1, rep(0.5, 4), -0.5, -0.5)),
+            'k4' = rbind(c(1, 1, 1, rep(0.5, 6)), c(rep(1, 5), rep(0, 4)), c(-1, -1, -1, rep(0.5, 4), -0.5, -0.5), c(rep(-1, 5), rep(0, 4))))
+
+sstat = function(Y, X, intercept = TRUE){
+  n = length(Y)
+  if (intercept == TRUE){
+    xx = cbind(rep(1, n), X)
   }
-  b[a:(a+n[(K+1)]-1)] = rnorm(n[(K+1)], 0, s_noise)
-  return(b)
+  else {xx = X}
+  mod = lm.fit(xx, Y)
+  bhat= c(mod$coefficients[2])
+  s = t(mod$residuals) %*% (mod$residuals) / (mod$df.residual)
+  se = sqrt((c(s) * solve(t(xx) %*% xx))[2,2])
+  return(list("bhat" = bhat, "se" = se))
 }
-beta2_sim = function(n, d, th_bd, s_clust, s_noise, beta1){
-  K = length(n) - 1
-  b = vector(length = sum(n))
-  a = 1
-  for (j in 1:K){
-    b[a:(a+n[j]-1)] = tan(rtruncnorm(n[j], a = d[j] - th_bd, b = d[j] + th_bd, mean = d[j], sd = s_clust)) * beta1[a:(a+n[j]-1)]
-    a = a + n[j]
-  }
-  b[a:(a+n[(K+1)]-1)] = rnorm(n[(K+1)], 0, s_noise)
-  return(b)
-}
-
-s_noise = 0.2
-s_clust0 = list('m2' = 0.2, 'm9' = 0.2)
-th_bd0 = list('m2' = 0.2, 'm9' = 0.2)
-
-n0 = list('k1' = c(100, 20), 'k2' = c(50, 50, 20), 'k4' = c(40, 20, 20, 20, 20), 'k8' = c(30, 10, 10, 10, 10, 10, 10, 10, 20))
-
-N0 = list('1sam' = 20000,
-          '2sam' = list(m2 = c(20000, 40000),
-                        m9 = c(20000, 23000, 26000, 29000, 32000, 35000, 38000,
-                               41000, 44000)))
-
-d_m2 = list('k1' = matrix(pi / c(4), nrow = 1),
-            'k2' = matrix(pi / c(4, -4), nrow = 2),
-            'k4' = matrix(pi / c(4, -4, 4, -4), nrow = 4))
-
-d_m9 = list('k1' = matrix(pi / rep(4, 8), nrow = 1),
-            'k2' = matrix(pi / c(rep(c(4, -4), 2), rep(c(8, 8), 4), rep(c(8, -8), 2)), nrow = 2),
-            'k4' = matrix(pi / c(rep(c(4, 4, -4, -4), 2), rep(c(8, 4, 8, -4), 2), rep(c(8, Inf, 8, Inf), 2), rep(c(8, Inf, -8, Inf), 2)), nrow = 4)
-            )
-
 
 M = 1000
 
-clusterExport(cl, c('beta1_sim', 'beta2_sim', 's_clust0', 'th_bd0', 's_noise', 'n0', 'N0', 'd_m2', 'd_m9', 'sstat', 'M'))
+clusterExport(cl, c('N0', 'n0', 'g0', 'd_m2', 'd_m9', 'sstat', 'M'))
 
-#1 sample sims
-clusterSetRNGStream(cl, 20201201)
-D_k1_m2_s1 = parLapply(cl, 1:M, function(i){
+########################################################################################################################
+#gamma = 0
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210723)
+D_g0_m2_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g0'
   n = n0$'k1'
   K = length(n) - 1
-  d = d_m2$'k1'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m2$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
-  corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
-clusterSetRNGStream(cl, 20201202)
-D_k2_m2_s1 = parLapply(cl, 1:M, function(i){
+clusterSetRNGStream(cl, 20210724)
+D_g0_m2_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g0'
   n = n0$'k2'
   K = length(n) - 1
-  d = d_m2$'k2'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m2$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
-  corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
-clusterSetRNGStream(cl, 20201203)
-D_k4_m2_s1 = parLapply(cl, 1:M, function(i){
+clusterSetRNGStream(cl, 20210725)
+D_g0_m2_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g0'
   n = n0$'k4'
   K = length(n) - 1
-  d = d_m2$'k4'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m2$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
-  corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
-clusterSetRNGStream(cl, 20201204)
-D_k1_m9_s1 = parLapply(cl, 1:M, function(i){
+#m = 9
+clusterSetRNGStream(cl, 20210726)
+D_g0_m9_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g0'
   n = n0$'k1'
   K = length(n) - 1
-  d = d_m9$'k1'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m9$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
-  corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
-clusterSetRNGStream(cl, 20201205)
-D_k2_m9_s1 = parLapply(cl, 1:M, function(i){
+clusterSetRNGStream(cl, 20210727)
+D_g0_m9_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g0'
   n = n0$'k2'
   K = length(n) - 1
-  d = d_m9$'k2'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m9$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
-  corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
-clusterSetRNGStream(cl, 20201206)
-D_k4_m9_s1 = parLapply(cl, 1:M, function(i){
+clusterSetRNGStream(cl, 20210728)
+D_g0_m9_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g0'
   n = n0$'k4'
   K = length(n) - 1
-  d = d_m9$'k4'
-  m = dim(d)[2] + 1
-  N = N0$'1sam'
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
+  d = matrix(d_m9$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
   }
-  #Generate indiviudal level data
-  maf = runif(sum(n), 0.01, 0.5)
-  G = sapply(1:sum(n), function(j){rbinom(N, 2, maf[j])})
-  gu = runif(m, -0.8, 0.8)
-  U = rnorm(N, 0, 1)
-  e = sapply(1:m, function(k){
-    gu[k] * U + sqrt(1 - gu[k]^2) * rnorm(N, 0, 1)
-  })
-  X = G %*% B + e
-  #Compute summary statistics
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  for (j in 1:sum(n)){
-    for (k in 1:m) {
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
     }
   }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+########################################################################################################################
+#gamma = 0.4
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210723)
+D_g4_m2_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g4'
+  n = n0$'k1'
+  K = length(n) - 1
+  d = matrix(d_m2$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
   corX = cor(X)
-  return(list('bhat' = bhat, 'se' = se, 'corX' = corX))
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210724)
+D_g4_m2_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g4'
+  n = n0$'k2'
+  K = length(n) - 1
+  d = matrix(d_m2$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210725)
+D_g4_m2_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g4'
+  n = n0$'k4'
+  K = length(n) - 1
+  d = matrix(d_m2$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+#m = 9
+clusterSetRNGStream(cl, 20210726)
+D_g4_m9_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g4'
+  n = n0$'k1'
+  K = length(n) - 1
+  d = matrix(d_m9$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210727)
+D_g4_m9_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g4'
+  n = n0$'k2'
+  K = length(n) - 1
+  d = matrix(d_m9$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210728)
+D_g4_m9_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g4'
+  n = n0$'k4'
+  K = length(n) - 1
+  d = matrix(d_m9$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+########################################################################################################################
+#gamma = 0.8
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210723)
+D_g8_m2_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g8'
+  n = n0$'k1'
+  K = length(n) - 1
+  d = matrix(d_m2$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210724)
+D_g8_m2_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g8'
+  n = n0$'k2'
+  K = length(n) - 1
+  d = matrix(d_m2$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210725)
+D_g8_m2_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m2'
+  g = g0$'g8'
+  n = n0$'k4'
+  K = length(n) - 1
+  d = matrix(d_m2$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+#m = 9
+clusterSetRNGStream(cl, 20210726)
+D_g8_m9_k1 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g8'
+  n = n0$'k1'
+  K = length(n) - 1
+  d = matrix(d_m9$'k1', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210727)
+D_g8_m9_k2 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g8'
+  n = n0$'k2'
+  K = length(n) - 1
+  d = matrix(d_m9$'k2', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
+})
+
+clusterSetRNGStream(cl, 20210728)
+D_g8_m9_k4 = parLapply(cl, 1:M, function(i){
+  #
+  N = N0$'m9'
+  g = g0$'g8'
+  n = n0$'k4'
+  K = length(n) - 1
+  d = matrix(d_m9$'k4', nrow = K)
+  #
+  n_all = sum(n)
+  n_sub = sum(n[1:K])
+  m = length(d) / K
+  
+  b = matrix(rep(0, n_sub * K), ncol = K)
+  for (k in 1:K){
+    p2 = runif(1, 0.05, 0.2)
+    b2 = cbind(runif(n[k], 0.03, 0.06), rnorm(n[k], 0.1, 0.02))
+    b[(sum(n[0:(k-1)])+1):sum(n[0:k]), k] = sapply(1:n[k], function(j){sample(b2[j, ], 1, prob = c(1-p2, p2))})
+  }
+  a = sapply(1:m, function(l){runif(n[K+1], -0.1, 0.1)})
+  N_max = max(N)
+  
+  U = rnorm(N_max, 0, 1)
+  maf = runif(n_all, 0.01, 0.5)
+  G = sapply(1:n_all, function(j){rbinom(N_max, 2, maf[j])})
+  L = sapply(1:K, function(k){G[, 1:n_sub] %*% b[, k]})
+  X = sapply(1:m, function(l){L %*% d[, l] + G[, (n_sub+1):n_all] %*% a[, l] + g * U + sqrt(1 - g^2) * rnorm(N_max, 0, 1)})
+  corX = cor(X)
+  
+  bhat = se = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    for (l in 1:m){
+      Xmod = sstat(X[1:N[l], l], G[1:N[l], j])
+      bhat[j, l] = Xmod$bhat
+      se[j, l] = Xmod$se
+    }
+  }
+  
+  b_std = bhat / se
+  b_prop = navmix::row_norm(b_std)
+  b_cor = matrix(nrow = n_all, ncol = m)
+  for (j in 1:n_all){
+    S1 = diag(se[j, ])
+    S = S1 %*% corX %*% S1
+    b_cor[j, ] = solve(sqrtm(S), bhat[j, ])
+  }
+  
+  return(list(b_std = b_std, b_prop = b_prop, b_cor = b_cor))
 })
 
 ########################################################################################################################
 #Results
-clusterExport(cl, c('D_k1_m2_s1', 'D_k2_m2_s1', 'D_k4_m2_s1', 'D_k1_m9_s1', 'D_k4_m9_s1', 'D_k2_m9_s1',
-                    'gxclust_K', 'row_norm', 'col_norm', 'C_vMF', 'f_vMF', 'gxclust', 'gxclust_K'))
+########################################################################################################################
+
+clusterExport(cl, c('D_g0_m2_k1', 'D_g0_m2_k2', 'D_g0_m2_k4', 'D_g0_m9_k1', 'D_g0_m9_k2', 'D_g0_m9_k4',
+                    'D_g4_m2_k1', 'D_g4_m2_k2', 'D_g4_m2_k4', 'D_g4_m9_k1', 'D_g4_m9_k2', 'D_g4_m9_k4',
+                    'D_g8_m2_k1', 'D_g8_m2_k2', 'D_g8_m2_k4', 'D_g8_m9_k1', 'D_g8_m9_k2', 'D_g8_m9_k4'))
 
 ########################################################################################################################
-#Cluster 1 sample datasets
-clusterSetRNGStream(cl, 20201213)
-R_k1_m2_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k1_m2_s1[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-clusterSetRNGStream(cl, 20201214)
-R_k2_m2_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k2_m2_s1[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-clusterSetRNGStream(cl, 20201215)
-R_k4_m2_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k4_m2_s1[[j]]
-  z0 = c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-clusterSetRNGStream(cl, 20201216)
-R_k1_m9_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k1_m9_s1[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-clusterSetRNGStream(cl, 20201217)
-R_k2_m9_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k2_m9_s1[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-clusterSetRNGStream(cl, 20201218)
-R_k4_m9_s1 = parSapply(cl, 1:M, function(j){
-  #
-  D = D_k4_m9_s1[[j]]
-  z0 = c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
-  #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
-})
-
-save('R_k1_m2_s1', 'R_k2_m2_s1', 'R_k4_m2_s1', 'R_k1_m9_s1', 'R_k4_m9_s1', 'R_k2_m9_s1', file = 'sims_res_s1.R')
-
+#gamma = 0
 ########################################################################################################################
-#Cluster 1 sample datasets with estimated correlation
-clusterSetRNGStream(cl, 20201213)
-R_k1_m2_s1_cor = parSapply(cl, 1:M, function(j){
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g0_m2_k1 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k1_m2_s1[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
+  D = D_g0_m2_k1
+  K = 1
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201214)
-R_k2_m2_s1_cor = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210824)
+R_g0_m2_k2 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k2_m2_s1[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
+  D = D_g0_m2_k2
+  K = 2
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201215)
-R_k4_m2_s1_cor = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210825)
+R_g0_m2_k4 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k4_m2_s1[[j]]
-  z0 =c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
+  D = D_g0_m2_k4
+  K = 4
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201216)
-R_k1_m9_s1_cor = parSapply(cl, 1:M, function(j){
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g0_m9_k1 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k1_m9_s1[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
+  D = D_g0_m9_k1
+  K = 1
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201217)
-R_k2_m9_s1_cor = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210827)
+R_g0_m9_k2 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k2_m9_s1[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
+  D = D_g0_m9_k2
+  K = 2
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201218)
-R_k4_m9_s1_cor = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210828)
+R_g0_m9_k4 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k4_m9_s1[[j]]
-  z0 = c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
+  D = D_g0_m9_k4
+  K = 4
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = matrix(nrow = nrow(D$bhat), ncol = ncol(D$bhat))
-  for (i in 1:n){
-    S1 = diag(D$se[i, ])
-    S = S1 %*% D$corX %*% S1
-    B_std[i, ] = solve(sqrtm(S), D$bhat[i, ])
-  }
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
 ########################################################################################################################
-#2 sample sims
-set.seed(20201207)
-D_k1_m2_s2 = lapply(1:M, function(i){
-  n = n0$'k1'
-  K = length(n) - 1
-  d = d_m2$'k1'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m2
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+#gamma = 4
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g4_m2_k1 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k1
+  n = n0$k1
+  K = 1
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-set.seed(20201208)
-D_k2_m2_s2 = lapply(1:M, function(i){
-  n = n0$'k2'
-  K = length(n) - 1
-  d = d_m2$'k2'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m2
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+clusterSetRNGStream(cl, 20210824)
+R_g4_m2_k2 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k2
+  n = n0$k2
+  K = 2
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-set.seed(20201209)
-D_k4_m2_s2 = lapply(1:M, function(i){
-  n = n0$'k4'
-  K = length(n) - 1
-  d = d_m2$'k4'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m2
-  s_clust = s_clust0$'m2'
-  th_bd = th_bd0$'m2'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+clusterSetRNGStream(cl, 20210825)
+R_g4_m2_k4 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k4
+  n = n0$k4
+  K = 4
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-set.seed(20201210)
-D_k1_m9_s2 = lapply(1:M, function(i){
-  n = n0$'k1'
-  K = length(n) - 1
-  d = d_m9$'k1'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m9
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g4_m9_k1 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k1
+  n = n0$k1
+  K = 1
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-set.seed(20201211)
-D_k2_m9_s2 = lapply(1:M, function(i){
-  n = n0$'k2'
-  K = length(n) - 1
-  d = d_m9$'k2'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m9
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+clusterSetRNGStream(cl, 20210827)
+R_g4_m9_k2 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k2
+  n = n0$k2
+  K = 2
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-set.seed(20201212)
-D_k4_m9_s2 = lapply(1:M, function(i){
-  n = n0$'k4'
-  K = length(n) - 1
-  d = d_m9$'k4'
-  m = dim(d)[2] + 1
-  N = N0$'2sam'$m9
-  s_clust = s_clust0$'m9'
-  th_bd = th_bd0$'m9'
-  #Generate genetic variant-trait associations
-  beta1 = beta1_sim(n, c(0.05, 0.05, -0.4, -0.4), c(0.4, 0.4, -0.05, -0.05), s_noise)
-  B = matrix(nrow = sum(n), ncol = m)
-  B[, 1] = beta1
-  for (k in 2:m){
-    B[, k] = beta2_sim(n, d[, (k-1)], th_bd, s_clust, s_noise, beta1)
-  }
-  #Generate indiviudal level data & summary statistics
-  maf = runif(sum(n), 0.01, 0.5)
-  bhat = se = matrix(nrow = sum(n), ncol = m)
-  gu = runif(m, -0.8, 0.8)
-  for (k in 1:m){
-    G = sapply(1:sum(n), function(j){rbinom(N[k], 2, maf[j])})
-    U = rnorm(N[k], 0, 1)
-    e = sapply(1:m, function(j){
-      gu[j] * U + sqrt(1 - gu[j]^2) * rnorm(N[k], 0, 1)
-    })
-    X = G %*% B + e
-    for (j in 1:sum(n)){
-      mod = sstat(X[, k], G[, j])
-      bhat[j, k] = mod$bhat
-      se[j, k] = mod$se
-    }
-  }
-  return(list('bhat' = bhat, 'se' = se))
+clusterSetRNGStream(cl, 20210828)
+R_g4_m9_k4 = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k4
+  n = n0$k4
+  K = 4
+  #
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
-
-clusterExport(cl, c('D_k1_m2_s2', 'D_k2_m2_s2', 'D_k4_m2_s2', 'D_k1_m9_s2', 'D_k4_m9_s2', 'D_k2_m9_s2'))
 
 ########################################################################################################################
-#Cluster 2 sample datasets
-clusterSetRNGStream(cl, 20201213)
-R_k1_m2_s2 = parSapply(cl, 1:M, function(j){
+#gamma = 0.8
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g8_m2_k1 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k1_m2_s2[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
+  D = D_g8_m2_k1
+  n = n0$k1
+  K = 1
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201214)
-R_k2_m2_s2 = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210824)
+R_g8_m2_k2 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k2_m2_s2[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
+  D = D_g8_m2_k2
+  n = n0$k2
+  K = 2
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201215)
-R_k4_m2_s2 = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210825)
+R_g8_m2_k4 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k4_m2_s2[[j]]
-  z0 = c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
+  D = D_g8_m2_k4
+  n = n0$k4
+  K = 4
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201216)
-R_k1_m9_s2 = parSapply(cl, 1:M, function(j){
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g8_m9_k1 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k1_m9_s2[[j]]
-  z0 = c(rep(1, 100))
-  Kmax = 4
+  D = D_g8_m9_k1
+  n = n0$k1
+  K = 1
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201217)
-R_k2_m9_s2 = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210827)
+R_g8_m9_k2 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k2_m9_s2[[j]]
-  z0 = c(rep(1, 50), rep(2, 50))
-  Kmax = 5
+  D = D_g8_m9_k2
+  n = n0$k2
+  K = 2
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
 
-clusterSetRNGStream(cl, 20201218)
-R_k4_m9_s2 = parSapply(cl, 1:M, function(j){
+clusterSetRNGStream(cl, 20210828)
+R_g8_m9_k4 = parLapply(cl, 1:M, function(i){
   #
-  D = D_k4_m9_s2[[j]]
-  z0 = c(rep(1, 40), rep(2, 20), rep(3, 20), rep(4, 20))
-  Kmax = 7
+  D = D_g8_m9_k4
+  n = n0$k4
+  K = 4
   #
-  n = dim(as.matrix(D$bhat))[1]
-  B_std = D$bhat / D$se
-  z_prop = gxclust_K(B_std, K = Kmax, pj_ini = 0.05)
-  z_mclust = Mclust(B_std, G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_mclust_prop = Mclust(row_norm(B_std), G = 1:Kmax, verbose = FALSE, initialization = list(noise = sample(n, 5)))
-  z_prop_mem = as.numeric(z_prop$clust$z)
-  z_mclust_mem = as.numeric(z_mclust$classification)
-  z_mclust_prop_mem = as.numeric(z_mclust_prop$classification)
-  r_prop = rand.index(z0, z_prop_mem[1:100])
-  r_mclust = rand.index(z0, z_mclust_mem[1:100])
-  r_mclust_prop = rand.index(z0, z_mclust_prop_mem[1:100])
-  return(list(rind = c(r_prop, r_mclust, r_mclust_prop), noclust = c(ncol(z_prop$clust$g)-1, max(z_mclust_mem),
-                                                                     max(z_mclust_prop_mem)),
-              nonoise = c(sum(z_prop_mem == max(z_prop_mem)), sum(z_mclust_mem == 0), sum(z_mclust_prop_mem == 0)),
-              z_prop$clust$g, z_mclust$z, z_mclust_prop$z))
+  b_std = D[[i]]$b_std
+  b_prop = D[[i]]$b_prop
+  b_cor = D[[i]]$b_cor
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z))
 })
+
+########################################################################################################################
+#Results: variants with > 1 sig association only
+########################################################################################################################
+
+########################################################################################################################
+#gamma = 0
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g0_m2_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m2_k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210824)
+R_g0_m2_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m2_k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210825)
+R_g0_m2_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m2_k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g0_m9_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m9_k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210827)
+R_g0_m9_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m9_k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210828)
+R_g0_m9_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g0_m9_k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+########################################################################################################################
+#gamma = 0.4
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g4_m2_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k1
+  n = n0$k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210824)
+R_g4_m2_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k2
+  n = n0$k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210825)
+R_g4_m2_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m2_k4
+  n = n0$k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g4_m9_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k1
+  n = n0$k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210827)
+R_g4_m9_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k2
+  n = n0$k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210828)
+R_g4_m9_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g4_m9_k4
+  n = n0$k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+########################################################################################################################
+#gamma = 0.8
+########################################################################################################################
+#m = 2
+clusterSetRNGStream(cl, 20210823)
+R_g8_m2_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m2_k1
+  n = n0$k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210824)
+R_g8_m2_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m2_k2
+  n = n0$k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210825)
+R_g8_m2_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m2_k4
+  n = n0$k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+#m = 9
+clusterSetRNGStream(cl, 20210826)
+R_g8_m9_k1_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m9_k1
+  n = n0$k1
+  K = 1
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210827)
+R_g8_m9_k2_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m9_k2
+  n = n0$k2
+  K = 2
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+clusterSetRNGStream(cl, 20210828)
+R_g8_m9_k4_sig = parLapply(cl, 1:M, function(i){
+  #
+  D = D_g8_m9_k4
+  n = n0$k4
+  K = 4
+  #
+  sig = which(apply(abs(D[[i]]$b_std), 1, max)>qnorm(1-5e-4))
+  b_std = D[[i]]$b_std[sig, ]
+  b_prop = D[[i]]$b_prop[sig, ]
+  b_cor = D[[i]]$b_cor[sig, ]
+  p = dim(b_std)[1]
+  g_navmix_std = navmix(b_std)
+  g_navmix_cor = navmix(b_cor)
+  g_mclust_std = Mclust(b_std, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  g_mclust_prop = Mclust(b_prop, initialization = list(noise = sample(p, 5)), verbose = FALSE)
+  
+  return(list(g_navmix_std = g_navmix_std$fit$g, g_navmix_cor = g_navmix_cor$fit$g,
+              g_mclust_std = g_mclust_std$z, g_mclust_prop = g_mclust_prop$z, sig = sig))
+})
+
+stopCluster(cl)
