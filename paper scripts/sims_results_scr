@@ -1,0 +1,949 @@
+library(tidyverse)
+library(fossil)
+library(tictoc)
+library(cluster)
+library(gridExtra)
+library(mclust)
+
+M = 1000
+
+p = 100
+z0 = list(rep(c(1, 2), c(80, 20)), rep(c(1, 2, 3), c(40, 40, 20)), rep(c(1, 2, 3, 4, 5), c(30, 20, 20, 10, 20)),
+          rep(c(1, 2), c(80, 20)), rep(c(1, 2, 3), c(40, 40, 20)), rep(c(1, 2, 3, 4, 5), c(30, 20, 20, 10, 20)))
+
+########################################################################################################################
+#Adjusted Rand index plots
+########################################################################################################################
+ARI_g0 = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1[[i]], R_g0_m2_k2[[i]], R_g0_m2_k4[[i]], R_g0_m9_k1[[i]], R_g0_m9_k2[[i]], R_g0_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+    c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+  })
+  c(z)
+})
+ARI_g0_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                       "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                       "Value" = c(t(ARI_g0)))
+ARI_g0_df$Method = factor(ARI_g0_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g0 = ggplot(ARI_g0_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g4 = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1[[i]], R_g4_m2_k2[[i]], R_g4_m2_k4[[i]], R_g4_m9_k1[[i]], R_g4_m9_k2[[i]], R_g4_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+    c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+  })
+  c(z)
+})
+ARI_g4_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                       "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                       "Value" = c(t(ARI_g4)))
+ARI_g4_df$Method = factor(ARI_g4_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g4 = ggplot(ARI_g4_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g8 = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1[[i]], R_g8_m2_k2[[i]], R_g8_m2_k4[[i]], R_g8_m9_k1[[i]], R_g8_m9_k2[[i]], R_g8_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+    c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+  })
+  c(z)
+})
+ARI_g8_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                       "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                       "Value" = c(t(ARI_g8)))
+ARI_g8_df$Method = factor(ARI_g8_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g8 = ggplot(ARI_g8_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_ARI_g0, box_ARI_g4, box_ARI_g8, ncol = 1)
+
+########################################################################################################################
+#Silouhette index plots
+########################################################################################################################
+SI_g0 = sapply(1:M, function(i){
+  D = list(D_g0_m2_k1[[i]], D_g0_m2_k2[[i]], D_g0_m2_k4[[i]], D_g0_m9_k1[[i]], D_g0_m9_k2[[i]], D_g0_m9_k4[[i]])
+  R = list(R_g0_m2_k1[[i]], R_g0_m2_k2[[i]], R_g0_m2_k4[[i]], R_g0_m9_k1[[i]], R_g0_m9_k2[[i]], R_g0_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g0_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                      "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                      "Value" = c(t(SI_g0)))
+SI_g0_df$Method = factor(SI_g0_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g0 = ggplot(SI_g0_df[is.na(SI_g0_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g4 = sapply(1:M, function(i){
+  D = list(D_g4_m2_k1[[i]], D_g4_m2_k2[[i]], D_g4_m2_k4[[i]], D_g4_m9_k1[[i]], D_g4_m9_k2[[i]], D_g4_m9_k4[[i]])
+  R = list(R_g4_m2_k1[[i]], R_g4_m2_k2[[i]], R_g4_m2_k4[[i]], R_g4_m9_k1[[i]], R_g4_m9_k2[[i]], R_g4_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g4_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                      "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                      "Value" = c(t(SI_g4)))
+SI_g4_df$Method = factor(SI_g4_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g4 = ggplot(SI_g4_df[is.na(SI_g4_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g8 = sapply(1:M, function(i){
+  D = list(D_g8_m2_k1[[i]], D_g8_m2_k2[[i]], D_g8_m2_k4[[i]], D_g8_m9_k1[[i]], D_g8_m9_k2[[i]], D_g8_m9_k4[[i]])
+  R = list(R_g8_m2_k1[[i]], R_g8_m2_k2[[i]], R_g8_m2_k4[[i]], R_g8_m9_k1[[i]], R_g8_m9_k2[[i]], R_g8_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g8_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                      "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                      "Value" = c(t(SI_g8)))
+SI_g8_df$Method = factor(SI_g8_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g8 = ggplot(SI_g8_df[is.na(SI_g8_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_SI_g0, box_SI_g4, box_SI_g8, ncol = 1)
+
+########################################################################################################################
+#Number of clusters
+########################################################################################################################
+nocl_g0 = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1[[i]], R_g0_m2_k2[[i]], R_g0_m2_k4[[i]], R_g0_m9_k1[[i]], R_g0_m9_k2[[i]], R_g0_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g0[1:4, ]), rowMeans(nocl_g0[5:8, ]), rowMeans(nocl_g0[9:12, ]), rowMeans(nocl_g0[13:16, ]),
+      rowMeans(nocl_g0[17:20, ]), rowMeans(nocl_g0[21:24, ]))
+
+nocl_g4 = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1[[i]],
+           R_g4_m2_k2[[i]],
+           R_g4_m2_k4[[i]],
+           R_g4_m9_k1[[i]],
+           R_g4_m9_k2[[i]],
+           R_g4_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g4[1:4, ]), rowMeans(nocl_g4[5:8, ]), rowMeans(nocl_g4[9:12, ]), rowMeans(nocl_g4[13:16, ]),
+      rowMeans(nocl_g4[17:20, ]), rowMeans(nocl_g4[21:24, ]))
+
+nocl_g8 = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1[[i]], R_g8_m2_k2[[i]], R_g8_m2_k4[[i]], R_g8_m9_k1[[i]], R_g8_m9_k2[[i]], R_g8_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g8[1:4, ]), rowMeans(nocl_g8[5:8, ]), rowMeans(nocl_g8[9:12, ]), rowMeans(nocl_g8[13:16, ]),
+      rowMeans(nocl_g8[17:20, ]), rowMeans(nocl_g8[21:24, ]))
+
+########################################################################################################################
+#Size of noise cluster
+########################################################################################################################
+nojk_g0 = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1[[i]], R_g0_m2_k2[[i]], R_g0_m2_k4[[i]], R_g0_m9_k1[[i]], R_g0_m9_k2[[i]], R_g0_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g0[1:4, ]), rowMeans(nojk_g0[5:8, ]), rowMeans(nojk_g0[9:12, ]), rowMeans(nojk_g0[13:16, ]),
+      rowMeans(nojk_g0[17:20, ]), rowMeans(nojk_g0[21:24, ]))
+
+nojk_g4 = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1[[i]], R_g4_m2_k2[[i]], R_g4_m2_k4[[i]], R_g4_m9_k1[[i]], R_g4_m9_k2[[i]], R_g4_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g4[1:4, ]), rowMeans(nojk_g4[5:8, ]), rowMeans(nojk_g4[9:12, ]), rowMeans(nojk_g4[13:16, ]),
+      rowMeans(nojk_g4[17:20, ]), rowMeans(nojk_g4[21:24, ]))
+
+nojk_g8 = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1[[i]], R_g8_m2_k2[[i]], R_g8_m2_k4[[i]], R_g8_m9_k1[[i]], R_g8_m9_k2[[i]], R_g8_m9_k4[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g8[1:4, ]), rowMeans(nojk_g8[5:8, ]), rowMeans(nojk_g8[9:12, ]), rowMeans(nojk_g8[13:16, ]),
+      rowMeans(nojk_g8[17:20, ]), rowMeans(nojk_g8[21:24, ]))
+
+########################################################################################################################
+#Adjusted Rand index plots: sig gv's only
+########################################################################################################################
+ARI_g0_sig = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_sig[[i]], R_g0_m2_k2_sig[[i]], R_g0_m2_k4_sig[[i]], R_g0_m9_k1_sig[[i]], R_g0_m9_k2_sig[[i]],
+           R_g0_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    z0_sig = z0[[j]][R[[j]]$sig]
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(adjustedRandIndex(z0_sig, zA), adjustedRandIndex(z0_sig, zB), adjustedRandIndex(z0_sig, zC), adjustedRandIndex(z0_sig, zD))
+  })
+  c(z)
+})
+ARI_g0_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                           "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                           "Value" = c(t(ARI_g0_sig)))
+ARI_g0_sig_df$Method = factor(ARI_g0_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g0_sig = ggplot(ARI_g0_sig_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g4_sig = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_sig[[i]], R_g4_m2_k2_sig[[i]], R_g4_m2_k4_sig[[i]], R_g4_m9_k1_sig[[i]], R_g4_m9_k2_sig[[i]],
+           R_g4_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    z0_sig = z0[[j]][R[[j]]$sig]
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(adjustedRandIndex(z0_sig, zA), adjustedRandIndex(z0_sig, zB), adjustedRandIndex(z0_sig, zC), adjustedRandIndex(z0_sig, zD))
+  })
+  c(z)
+})
+ARI_g4_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                           "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                           "Value" = c(t(ARI_g4_sig)))
+ARI_g4_sig_df$Method = factor(ARI_g4_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g4_sig = ggplot(ARI_g4_sig_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g8_sig = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_sig[[i]], R_g8_m2_k2_sig[[i]], R_g8_m2_k4_sig[[i]], R_g8_m9_k1_sig[[i]], R_g8_m9_k2_sig[[i]],
+           R_g8_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    z0_sig = z0[[j]][R[[j]]$sig]
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(adjustedRandIndex(z0_sig, zA), adjustedRandIndex(z0_sig, zB), adjustedRandIndex(z0_sig, zC), adjustedRandIndex(z0_sig, zD))
+  })
+  c(z)
+})
+ARI_g8_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                           "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                           "Value" = c(t(ARI_g8_sig)))
+ARI_g8_sig_df$Method = factor(ARI_g8_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g8_sig = ggplot(ARI_g8_sig_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_ARI_g0_sig, box_ARI_g4_sig, box_ARI_g8_sig, ncol = 1)
+
+########################################################################################################################
+#Silouhette index plots: sig gv's only
+########################################################################################################################
+SI_g0_sig = sapply(1:M, function(i){
+  D = list(D_g0_m2_k1[[i]], D_g0_m2_k2[[i]], D_g0_m2_k4[[i]], D_g0_m9_k1[[i]], D_g0_m9_k2[[i]], D_g0_m9_k4[[i]])
+  R = list(R_g0_m2_k1_sig[[i]], R_g0_m2_k2_sig[[i]], R_g0_m2_k4_sig[[i]], R_g0_m9_k1_sig[[i]], R_g0_m9_k2_sig[[i]], R_g0_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[R[[j]]$sig, ] %*% t(D[[j]]$b_prop[R[[j]]$sig, ])
+    p = length(R[[j]]$sig)
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g0_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                          "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                          "Value" = c(t(SI_g0_sig)))
+SI_g0_sig_df$Method = factor(SI_g0_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g0_sig = ggplot(SI_g0_sig_df[is.na(SI_g0_sig_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g4_sig = sapply(1:M, function(i){
+  D = list(D_g4_m2_k1[[i]], D_g4_m2_k2[[i]], D_g4_m2_k4[[i]], D_g4_m9_k1[[i]], D_g4_m9_k2[[i]], D_g4_m9_k4[[i]])
+  R = list(R_g4_m2_k1_sig[[i]], R_g4_m2_k2_sig[[i]], R_g4_m2_k4_sig[[i]], R_g4_m9_k1_sig[[i]], R_g4_m9_k2_sig[[i]], R_g4_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[R[[j]]$sig, ] %*% t(D[[j]]$b_prop[R[[j]]$sig, ])
+    p = length(R[[j]]$sig)
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g4_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                          "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                          "Value" = c(t(SI_g4_sig)))
+SI_g4_sig_df$Method = factor(SI_g4_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g4_sig = ggplot(SI_g4_sig_df[is.na(SI_g4_sig_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g8_sig = sapply(1:M, function(i){
+  D = list(D_g8_m2_k1[[i]], D_g8_m2_k2[[i]], D_g8_m2_k4[[i]], D_g8_m9_k1[[i]], D_g8_m9_k2[[i]], D_g8_m9_k4[[i]])
+  R = list(R_g8_m2_k1_sig[[i]], R_g8_m2_k2_sig[[i]], R_g8_m2_k4_sig[[i]], R_g8_m9_k1_sig[[i]], R_g8_m9_k2_sig[[i]], R_g8_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[R[[j]]$sig, ] %*% t(D[[j]]$b_prop[R[[j]]$sig, ])
+    p = length(R[[j]]$sig)
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    
+    c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+      if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+  })
+  c(z)
+})
+SI_g8_sig_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                          "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                          "Value" = c(t(SI_g8_sig)))
+SI_g8_sig_df$Method = factor(SI_g8_sig_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g8_sig = ggplot(SI_g8_sig_df[is.na(SI_g8_sig_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_SI_g0_sig, box_SI_g4_sig, box_SI_g8_sig, ncol = 1)
+
+########################################################################################################################
+#Number of clusters: sig gv's only
+########################################################################################################################
+nocl_g0_sig = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_sig[[i]], R_g0_m2_k2_sig[[i]], R_g0_m2_k4_sig[[i]], R_g0_m9_k1_sig[[i]], R_g0_m9_k2_sig[[i]], R_g0_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g0_sig[1:4, ]), rowMeans(nocl_g0_sig[5:8, ]), rowMeans(nocl_g0_sig[9:12, ]), rowMeans(nocl_g0_sig[13:16, ]),
+      rowMeans(nocl_g0_sig[17:20, ]), rowMeans(nocl_g0_sig[21:24, ]))
+
+nocl_g4_sig = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_sig[[i]], R_g4_m2_k2_sig[[i]], R_g4_m2_k4_sig[[i]], R_g4_m9_k1_sig[[i]], R_g4_m9_k2_sig[[i]],
+           R_g4_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g4_sig[1:4, ]), rowMeans(nocl_g4_sig[5:8, ]), rowMeans(nocl_g4_sig[9:12, ]), rowMeans(nocl_g4_sig[13:16, ]),
+      rowMeans(nocl_g4_sig[17:20, ]), rowMeans(nocl_g4_sig[21:24, ]))
+
+nocl_g8_sig = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_sig[[i]], R_g8_m2_k2_sig[[i]], R_g8_m2_k4_sig[[i]], R_g8_m9_k1_sig[[i]], R_g8_m9_k2_sig[[i]], R_g8_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g8_sig[1:4, ]), rowMeans(nocl_g8_sig[5:8, ]), rowMeans(nocl_g8_sig[9:12, ]), rowMeans(nocl_g8_sig[13:16, ]),
+      rowMeans(nocl_g8_sig[17:20, ]), rowMeans(nocl_g8_sig[21:24, ]))
+
+########################################################################################################################
+#Size of noise cluster: sig gv's only
+########################################################################################################################
+nojk_g0_sig = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_sig[[i]], R_g0_m2_k2_sig[[i]], R_g0_m2_k4_sig[[i]], R_g0_m9_k1_sig[[i]], R_g0_m9_k2_sig[[i]], R_g0_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g0_sig[1:4, ]), rowMeans(nojk_g0_sig[5:8, ]), rowMeans(nojk_g0_sig[9:12, ]), rowMeans(nojk_g0_sig[13:16, ]),
+      rowMeans(nojk_g0_sig[17:20, ]), rowMeans(nojk_g0_sig[21:24, ]))
+
+nojk_g4_sig = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_sig[[i]], R_g4_m2_k2_sig[[i]], R_g4_m2_k4_sig[[i]], R_g4_m9_k1_sig[[i]], R_g4_m9_k2_sig[[i]], R_g4_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g4_sig[1:4, ]), rowMeans(nojk_g4_sig[5:8, ]), rowMeans(nojk_g4_sig[9:12, ]), rowMeans(nojk_g4_sig[13:16, ]),
+      rowMeans(nojk_g4_sig[17:20, ]), rowMeans(nojk_g4_sig[21:24, ]))
+
+nojk_g8_sig = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_sig[[i]], R_g8_m2_k2_sig[[i]], R_g8_m2_k4_sig[[i]], R_g8_m9_k1_sig[[i]], R_g8_m9_k2_sig[[i]], R_g8_m9_k4_sig[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+    c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+      sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g8_sig[1:4, ]), rowMeans(nojk_g8_sig[5:8, ]), rowMeans(nojk_g8_sig[9:12, ]), rowMeans(nojk_g8_sig[13:16, ]),
+      rowMeans(nojk_g8_sig[17:20, ]), rowMeans(nojk_g8_sig[21:24, ]))
+
+########################################################################################################################
+#Random N's
+########################################################################################################################
+########################################################################################################################
+#Adjusted Rand index plots
+########################################################################################################################
+ARI_g0_N = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_N[[i]], R_g0_m2_k2_N[[i]], R_g0_m2_k4_N[[i]], R_g0_m9_k1_N[[i]], R_g0_m9_k2_N[[i]], R_g0_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if(is.na(R[[j]]$g_mclust_prop[1])){
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+    }
+  })
+  c(z)
+})
+ARI_g0_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                         "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                         "Value" = c(t(ARI_g0_N)))
+ARI_g0_N_df$Method = factor(ARI_g0_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g0_N = ggplot(ARI_g0_N_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g4_N = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_N[[i]], R_g4_m2_k2_N[[i]], R_g4_m2_k4_N[[i]], R_g4_m9_k1_N[[i]], R_g4_m9_k2_N[[i]], R_g4_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if(is.na(R[[j]]$g_mclust_prop[1])){
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+    }
+  })
+  c(z)
+})
+ARI_g4_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                         "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                         "Value" = c(t(ARI_g4_N)))
+ARI_g4_N_df$Method = factor(ARI_g4_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g4_N = ggplot(ARI_g4_N_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+ARI_g8_N = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_N[[i]], R_g8_m2_k2_N[[i]], R_g8_m2_k4_N[[i]], R_g8_m9_k1_N[[i]], R_g8_m9_k2_N[[i]], R_g8_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if(is.na(R[[j]]$g_mclust_prop[1])){
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      c(adjustedRandIndex(z0[[j]], zA), adjustedRandIndex(z0[[j]], zB), adjustedRandIndex(z0[[j]], zC), adjustedRandIndex(z0[[j]], zD))
+    }
+  })
+  c(z)
+})
+ARI_g8_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                         "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                         "Value" = c(t(ARI_g8_N)))
+ARI_g8_N_df$Method = factor(ARI_g8_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_ARI_g8_N = ggplot(ARI_g8_N_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Adjusted Rand index") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_ARI_g0_N, box_ARI_g4_N, box_ARI_g8_N, ncol = 1)
+
+########################################################################################################################
+#Silouhette index plots
+########################################################################################################################
+SI_g0_N = sapply(1:M, function(i){
+  D = list(D_g0_m2_k1_N[[i]], D_g0_m2_k2_N[[i]], D_g0_m2_k4_N[[i]], D_g0_m9_k1_N[[i]], D_g0_m9_k2_N[[i]], D_g0_m9_k4_N[[i]])
+  R = list(R_g0_m2_k1_N[[i]], R_g0_m2_k2_N[[i]], R_g0_m2_k4_N[[i]], R_g0_m9_k1_N[[i]], R_g0_m9_k2_N[[i]], R_g0_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if (is.na(R[[j]]$g_mclust_prop[1])) {
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        NA)
+    } else{
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+    }
+  })
+  c(z)
+})
+SI_g0_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                        "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                        "Value" = c(t(SI_g0_N)))
+SI_g0_N_df$Method = factor(SI_g0_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g0_N = ggplot(SI_g0_N_df[is.na(SI_g0_N_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g4_N = sapply(1:M, function(i){
+  D = list(D_g4_m2_k1_N[[i]], D_g4_m2_k2_N[[i]], D_g4_m2_k4_N[[i]], D_g4_m9_k1_N[[i]], D_g4_m9_k2_N[[i]], D_g4_m9_k4_N[[i]])
+  R = list(R_g4_m2_k1_N[[i]], R_g4_m2_k2_N[[i]], R_g4_m2_k4_N[[i]], R_g4_m9_k1_N[[i]], R_g4_m9_k2_N[[i]], R_g4_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if (is.na(R[[j]]$g_mclust_prop[1])) {
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        NA)
+    } else{
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+    }
+  })
+  c(z)
+})
+SI_g4_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                        "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                        "Value" = c(t(SI_g4_N)))
+SI_g4_N_df$Method = factor(SI_g4_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g4_N = ggplot(SI_g4_N_df[is.na(SI_g4_N_df$Value) == F, ], aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.4))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+SI_g8_N = sapply(1:M, function(i){
+  D = list(D_g8_m2_k1_N[[i]], D_g8_m2_k2_N[[i]], D_g8_m2_k4_N[[i]], D_g8_m9_k1_N[[i]], D_g8_m9_k2_N[[i]], D_g8_m9_k4_N[[i]])
+  R = list(R_g8_m2_k1_N[[i]], R_g8_m2_k2_N[[i]], R_g8_m2_k4_N[[i]], R_g8_m9_k1_N[[i]], R_g8_m9_k2_N[[i]], R_g8_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    aa = D[[j]]$b_prop[1:p, ] %*% t(D[[j]]$b_prop[1:p, ])
+    diag(aa) = rep(1, p)
+    alen = acos(aa)
+    
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))[1:p]
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))[1:p]
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))[1:p]
+    if (is.na(R[[j]]$g_mclust_prop[1])) {
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        NA)
+    } else{
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))[1:p]
+      
+      c(if(is.na(silhouette(zA, dmatrix = alen)[1])) {NA} else {mean(silhouette(zA, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zB, dmatrix = alen)[1])) {NA} else {mean(silhouette(zB, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zC, dmatrix = alen)[1])) {NA} else {mean(silhouette(zC, dmatrix = alen)[, 3])},
+        if(is.na(silhouette(zD, dmatrix = alen)[1])) {NA} else {mean(silhouette(zD, dmatrix = alen)[, 3])})
+    }
+  })
+  c(z)
+})
+SI_g8_N_df = data.frame("m" = c(rep("m = 2", 12*M), rep("m = 9", 12*M)), "K" = rep(c(rep("K = 1", 4*M), rep("K = 2", 4*M), rep("K = 4", 4*M)), 2),
+                        "Method" = rep(c(rep("NAvMix", M), rep("NAvMix (cor)", M), rep("mclust", M), rep("mclust (pr)", M)), 6),
+                        "Value" = c(t(SI_g8_N)))
+#SI_g8_N_df$Method = factor(SI_g8_N_df[is.na(SI_g8_N_df$Value) == F, ]$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+SI_g8_N_df$Method = factor(SI_g8_N_df$Method, levels = c("NAvMix", "NAvMix (cor)", "mclust", "mclust (pr)"))
+box_SI_g8_N = ggplot(SI_g8_N_df, aes(x = Method, y = Value)) +
+  geom_boxplot(aes(fill = Method), lwd = 0.3, outlier.size = 0.3, show.legend = FALSE) + facet_grid(m ~ K) +
+  scale_fill_brewer(palette = "Dark2") + ggtitle(expression(paste(gamma, "=" , 0.8))) +
+  ylab("Silouhette coefficient") + xlab("Method") + theme_bw() +
+  scale_x_discrete(labels = c("NAvMix", "NAvMix\n(cor)", "mclust", "mclust\n(pr)")) +
+  theme(axis.ticks.x = element_blank(), axis.text.y = element_text(size = 7),
+        axis.title.y = element_text(size = 7),
+        axis.title.x = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7), strip.text = element_text(size = 8),
+        axis.text.x = element_text(size = 7),
+        title = element_text(size = 7))
+
+grid.arrange(box_SI_g0_N, box_SI_g4_N, box_SI_g8_N, ncol = 1)
+
+########################################################################################################################
+#Number of clusters
+########################################################################################################################
+nocl_g0_N = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_N[[i]], R_g0_m2_k2_N[[i]], R_g0_m2_k4_N[[i]], R_g0_m9_k1_N[[i]], R_g0_m9_k2_N[[i]], R_g0_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, NA)
+    } else {
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g0_N[1:4, ], na.rm = T), rowMeans(nocl_g0_N[5:8, ], na.rm = T), rowMeans(nocl_g0_N[9:12, ], na.rm = T), rowMeans(nocl_g0_N[13:16, ], na.rm = T),
+      rowMeans(nocl_g0_N[17:20, ], na.rm = T), rowMeans(nocl_g0_N[21:24, ], na.rm = T))
+
+nocl_g4_N = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_N[[i]], R_g4_m2_k2_N[[i]], R_g4_m2_k4_N[[i]], R_g4_m9_k1_N[[i]], R_g4_m9_k2_N[[i]], R_g4_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, NA)
+    } else {
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g4_N[1:4, ], na.rm = T), rowMeans(nocl_g4_N[5:8, ], na.rm = T), rowMeans(nocl_g4_N[9:12, ], na.rm = T), rowMeans(nocl_g4_N[13:16, ], na.rm = T),
+      rowMeans(nocl_g4_N[17:20, ], na.rm = T), rowMeans(nocl_g4_N[21:24, ], na.rm = T))
+
+nocl_g8_N = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_N[[i]], R_g8_m2_k2_N[[i]], R_g8_m2_k4_N[[i]], R_g8_m9_k1_N[[i]], R_g8_m9_k2_N[[i]], R_g8_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, NA)
+    } else {
+      c(ncol(R[[j]]$g_navmix_std)-1, ncol(R[[j]]$g_navmix_cor)-1, ncol(R[[j]]$g_mclust_std)-1, ncol(R[[j]]$g_mclust_prop)-1)
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nocl_g8_N[1:4, ], na.rm = T), rowMeans(nocl_g8_N[5:8, ], na.rm = T), rowMeans(nocl_g8_N[9:12, ], na.rm = T), rowMeans(nocl_g8_N[13:16, ], na.rm = T),
+      rowMeans(nocl_g8_N[17:20, ], na.rm = T), rowMeans(nocl_g8_N[21:24, ], na.rm = T))
+
+########################################################################################################################
+#Size of noise cluster
+########################################################################################################################
+nojk_g0_N = sapply(1:M, function(i){
+  R = list(R_g0_m2_k1_N[[i]], R_g0_m2_k2_N[[i]], R_g0_m2_k4_N[[i]], R_g0_m9_k1_N[[i]], R_g0_m9_k2_N[[i]], R_g0_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g0_N[1:4, ], na.rm = T), rowMeans(nojk_g0_N[5:8, ], na.rm = T), rowMeans(nojk_g0_N[9:12, ], na.rm = T), rowMeans(nojk_g0_N[13:16, ], na.rm = T),
+      rowMeans(nojk_g0_N[17:20, ], na.rm = T), rowMeans(nojk_g0_N[21:24, ], na.rm = T))
+
+nojk_g4_N = sapply(1:M, function(i){
+  R = list(R_g4_m2_k1_N[[i]], R_g4_m2_k2_N[[i]], R_g4_m2_k4_N[[i]], R_g4_m9_k1_N[[i]], R_g4_m9_k2_N[[i]], R_g4_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g4_N[1:4, ], na.rm = T), rowMeans(nojk_g4_N[5:8, ], na.rm = T), rowMeans(nojk_g4_N[9:12, ], na.rm = T), rowMeans(nojk_g4_N[13:16, ], na.rm = T),
+      rowMeans(nojk_g4_N[17:20, ], na.rm = T), rowMeans(nojk_g4_N[21:24, ], na.rm = T))
+
+nojk_g8_N = sapply(1:M, function(i){
+  R = list(R_g8_m2_k1_N[[i]], R_g8_m2_k2_N[[i]], R_g8_m2_k4_N[[i]], R_g8_m9_k1_N[[i]], R_g8_m9_k2_N[[i]], R_g8_m9_k4_N[[i]])
+  z = sapply(1:6, function(j){
+    zA = as.numeric(apply(R[[j]]$g_navmix_std, 1, which.max))
+    zB = as.numeric(apply(R[[j]]$g_navmix_cor, 1, which.max))
+    zC = as.numeric(apply(R[[j]]$g_mclust_std, 1, which.max))
+    if (is.na(R[[j]]$g_mclust_prop[1])){
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), NA)
+    } else {
+      zD = as.numeric(apply(R[[j]]$g_mclust_prop, 1, which.max))
+      c(sum(zA==ncol(R[[j]]$g_navmix_std)), sum(zB==ncol(R[[j]]$g_navmix_cor)),
+        sum(zC==ncol(R[[j]]$g_mclust_std)), sum(zD==ncol(R[[j]]$g_mclust_prop)))
+    }
+  })
+  c(z)
+})
+rbind(rowMeans(nojk_g8_N[1:4, ], na.rm = T), rowMeans(nojk_g8_N[5:8, ], na.rm = T), rowMeans(nojk_g8_N[9:12, ], na.rm = T), rowMeans(nojk_g8_N[13:16, ], na.rm = T),
+      rowMeans(nojk_g8_N[17:20, ], na.rm = T), rowMeans(nojk_g8_N[21:24, ], na.rm = T))
