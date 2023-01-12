@@ -14,3 +14,10 @@ Suggests:
     rmarkdown
 VignetteBuilder: knitr
 URL: https://github.com/aj-grant/navmix
+Imports: 
+    expm,
+    ggplot2,
+    plotrix,
+    RColorBrewer,
+    skmeans,
+    tidyr
